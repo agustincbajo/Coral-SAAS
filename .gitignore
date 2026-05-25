@@ -1,0 +1,46 @@
+# Rust
+/target
+**/*.rs.bk
+Cargo.lock.bak
+
+# Next.js / Node
+node_modules/
+.next/
+out/
+.pnp.*
+.yarn/install-state.gz
+.pnpm-store/
+
+# Env
+.env
+.env.local
+.env.*.local
+*.local
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Coverage
+coverage/
+*.lcov
+
+# Build artefacts
+dist/
+build/
+
+# Test outputs
+/tmp/
+/test-results/

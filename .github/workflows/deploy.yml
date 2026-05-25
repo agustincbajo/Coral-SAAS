@@ -1,0 +1,28 @@
+name: Deploy to Railway
+
+on:
+  push:
+    branches: [main]
+
+# OIDC token used to authenticate to Railway — no long-lived secrets.
+# See SAAS-PLAN.md §15 Fase 0 / GAP #62.
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    name: Railway deploy
+    runs-on: ubuntu-latest
+    environment: production  # requires manual approval if branch protection is on
+    steps:
+      - uses: actions/checkout@v4
+
+      # Railway's official Action; configure OIDC trust relationship in
+      # the Railway dashboard before first run.
+      - name: Deploy
+        uses: railwayapp/cli@v3
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        with:
+          args: up --service api && railway up --service web && railway up --service worker

@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust (api / worker / shared)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets --workspace -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace --all-features
+
+  web:
+    name: Next.js (web)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Install
+        run: pnpm install --frozen-lockfile || pnpm install
+        env:
+          GITHUB_PACKAGES_TOKEN: ${{ secrets.GITHUB_PACKAGES_TOKEN }}
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+  containers:
+    name: Container scan (Trivy)
+    runs-on: ubuntu-latest
+    needs: rust
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build api image
+        run: docker build -f api/Dockerfile -t coral-saas-api:ci .
+
+      - name: Build worker image
+        run: docker build -f worker/Dockerfile -t coral-saas-worker:ci .
+
+      - name: Trivy scan (api)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: coral-saas-api:ci
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+
+      - name: Trivy scan (worker)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: coral-saas-worker:ci
+          severity: CRITICAL,HIGH
+          exit-code: "1"

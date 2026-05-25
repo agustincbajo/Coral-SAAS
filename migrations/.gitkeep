@@ -1,0 +1,2 @@
+# sqlx migrations land here. First migration (`0001_init.sql`) creates
+# the schema defined in docs/SAAS-PLAN.md §5.

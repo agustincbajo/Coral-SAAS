@@ -1,0 +1,73 @@
+[workspace]
+resolver = "2"
+members = ["api", "worker", "shared"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.83"
+license = "UNLICENSED"
+authors = ["Agustín Bajo <agustinbajo@gmail.com>"]
+repository = "https://github.com/agustincbajo/Coral-SAAS"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.42", features = ["full"] }
+
+# Web framework
+axum = { version = "0.7", features = ["macros", "tracing"] }
+tower = { version = "0.5", features = ["util", "timeout", "limit"] }
+tower-http = { version = "0.6", features = ["trace", "cors", "compression-br"] }
+hyper = "1.5"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "time", "json", "macros"] }
+
+# Redis (job queue)
+redis = { version = "0.27", features = ["tokio-comp", "aio"] }
+
+# Identifiers
+uuid = { version = "1.11", features = ["v4", "v7", "serde"] }
+
+# Time
+time = { version = "0.3", features = ["serde", "macros"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Tracing / logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-opentelemetry = "0.28"
+opentelemetry = "0.27"
+opentelemetry-otlp = { version = "0.27", features = ["grpc-tonic"] }
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
+
+# Errors
+anyhow = "1.0"
+thiserror = "2.0"
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+# Crypto / JWT (for GitHub App)
+jsonwebtoken = "9.3"
+sha2 = "0.10"
+hmac = "0.12"
+hex = "0.4"
+subtle = "2.6"
+
+# Configuration
+config = "0.14"
+dotenvy = "0.15"
+
+# Internal shared crate
+shared = { path = "shared" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

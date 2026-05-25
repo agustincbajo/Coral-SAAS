@@ -1,0 +1,42 @@
+# Coral-SAAS — Railway monorepo config.
+# Three services share this repo; Postgres + Redis are added separately
+# as Railway add-ons and inject DATABASE_URL / REDIS_URL into each service.
+# Mirror of the em-dashboard pattern.
+
+[[services]]
+name = "api"
+root = "."
+
+[services.build]
+builder = "DOCKERFILE"
+dockerfilePath = "api/Dockerfile"
+
+[services.deploy]
+healthcheckPath = "/healthz"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+
+[[services]]
+name = "web"
+root = "."
+
+[services.build]
+builder = "DOCKERFILE"
+dockerfilePath = "web/Dockerfile"
+
+[services.deploy]
+healthcheckPath = "/api/health"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+
+[[services]]
+name = "worker"
+root = "."
+
+[services.build]
+builder = "DOCKERFILE"
+dockerfilePath = "worker/Dockerfile"
+
+[services.deploy]
+restartPolicyType = "ALWAYS"
+restartPolicyMaxRetries = 0
