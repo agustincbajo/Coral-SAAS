@@ -101,3 +101,24 @@ export function useLogout() {
     },
   });
 }
+
+export interface WikiPage {
+  slug: string;
+  title: string | null;
+  html: string;
+}
+
+export function useWikiPage(
+  tenantId: string | undefined,
+  repoId: string | undefined,
+  slug: string | undefined,
+) {
+  return useQuery({
+    queryKey: ["wiki", tenantId, repoId, slug] as const,
+    queryFn: () =>
+      api.get<WikiPage>(
+        `/api/tenants/${tenantId}/repos/${repoId}/wiki/${slug}`,
+      ),
+    enabled: Boolean(tenantId && repoId && slug),
+  });
+}

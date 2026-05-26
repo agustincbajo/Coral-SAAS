@@ -17,9 +17,11 @@ mod github_app;
 mod idempotency;
 mod jobs;
 mod middleware;
+mod r2;
 mod routes;
 mod state;
 mod stripe;
+mod wiki;
 
 use config::Config;
 use state::AppState;

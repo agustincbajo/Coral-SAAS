@@ -14,6 +14,7 @@ pub mod jobs;
 pub mod me;
 pub mod repos;
 pub mod stripe_webhook;
+pub mod wiki;
 
 pub fn build_router(state: AppState) -> Router {
     Router::new()
@@ -22,6 +23,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(me::router())
         .merge(repos::router())
         .merge(jobs::router())
+        .merge(wiki::router())
         .merge(github_install::router())
         .merge(github_webhook::router())
         .merge(stripe_webhook::router())
