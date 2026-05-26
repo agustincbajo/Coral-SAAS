@@ -7,6 +7,7 @@ use tower_cookies::CookieManagerLayer;
 use tower_http::trace::TraceLayer;
 
 pub mod auth;
+pub mod github_install;
 pub mod github_webhook;
 pub mod health;
 pub mod jobs;
@@ -21,6 +22,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(me::router())
         .merge(repos::router())
         .merge(jobs::router())
+        .merge(github_install::router())
         .merge(github_webhook::router())
         .merge(stripe_webhook::router())
         .layer(middleware::from_fn(request_id::middleware))
