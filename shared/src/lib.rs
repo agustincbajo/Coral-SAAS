@@ -73,3 +73,12 @@ pub enum Error {
     #[error("unknown error: {0}")]
     Unknown(String),
 }
+
+/// Redis queue key — both api and worker reference this so they stay
+/// in sync. One global queue for now; if we ever need per-tenant
+/// queues for fair-share scheduling, swap to keyed queues.
+pub const JOB_QUEUE_KEY: &str = "coral:jobs";
+
+/// How long a worker BLPOPs before re-issuing — lets `worker-runner`
+/// loop back to its heartbeat / shutdown check.
+pub const WORKER_POLL_INTERVAL_SECS: usize = 30;

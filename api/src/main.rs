@@ -15,6 +15,7 @@ mod db;
 mod error;
 mod github_app;
 mod idempotency;
+mod jobs;
 mod middleware;
 mod routes;
 mod state;
