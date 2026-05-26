@@ -1,44 +1,52 @@
-//! Coral-SAAS control plane.
-//!
-//! Stub entry point — exposes `/healthz` so Railway's healthcheck passes.
-//! Real routes (`/auth`, `/api/repos`, `/api/jobs`, `/api/github/webhook`,
-//! `/api/stripe/webhook`) get wired up in Fase 1+ of the SAAS-PLAN.
+//! Coral-SAAS control plane entry point.
+//
+// `dead_code` is allowed crate-wide while the scaffold is incomplete —
+// many model methods and config fields land before their consumers do.
+// Remove this attribute before launch.
+#![allow(dead_code)]
 
-use axum::{routing::get, Json, Router};
-use serde::Serialize;
 use std::net::SocketAddr;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-#[derive(Serialize)]
-struct Health {
-    status: &'static str,
-    service: &'static str,
-    version: &'static str,
-}
+mod auth;
+mod config;
+mod db;
+mod error;
+mod middleware;
+mod routes;
+mod state;
 
-async fn healthz() -> Json<Health> {
-    Json(Health {
-        status: "ok",
-        service: "coral-saas-api",
-        version: env!("CARGO_PKG_VERSION"),
-    })
-}
+use config::Config;
+use state::AppState;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
 
     tracing_subscriber::registry()
-        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,api=debug")))
         .with(tracing_subscriber::fmt::layer().json())
         .init();
 
-    let port: u16 = std::env::var("PORT")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(8080);
+    let config = Config::from_env()?;
+    let port = config.port;
 
-    let app = Router::new().route("/healthz", get(healthz));
+    let db = db::connect(&config.database_url).await?;
+
+    // Run pending migrations. In production we may want to gate this
+    // behind a flag and run migrations as a separate step.
+    sqlx::migrate!("../migrations").run(&db).await?;
+
+    let redis_client = redis::Client::open(config.redis_url.clone())?;
+    let redis = redis::aio::ConnectionManager::new(redis_client).await?;
+
+    let http = reqwest::Client::builder()
+        .user_agent("coral-saas/0.1")
+        .timeout(std::time::Duration::from_secs(15))
+        .build()?;
+
+    let state = AppState::new(config, db, redis, http);
+    let app = routes::build_router(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     tracing::info!(%addr, "coral-saas api starting");
