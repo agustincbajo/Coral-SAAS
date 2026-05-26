@@ -2,6 +2,7 @@
 
 > Repo-specific instructions for Claude Code working in this codebase.
 > Source of truth for architecture: [docs/SAAS-PLAN.md](docs/SAAS-PLAN.md). Read it before making any structural changes.
+> Source of truth for **current build state**: [docs/STATUS.md](docs/STATUS.md). Read it before assuming a feature is or isn't implemented.
 
 ## Project quick facts
 
@@ -71,3 +72,16 @@ The worker Dockerfile copies the `coral` binary from a pinned upstream release. 
 ## Reviewers' gap log
 
 `docs/SAAS-PLAN-GAPS.md` lists 70 production gaps identified by reviewers. When implementing a feature, scan this file for related gaps and address them inline (or explicitly defer with a comment referencing the gap number).
+
+## Tech-debt / known limitations to be aware of
+
+- **`#![allow(dead_code)]` in api/src/main.rs**: scaffold-time concession; remove before launch and address each warning specifically.
+- **No sqlx prepare metadata**: queries are runtime-typed (`sqlx::query_as::<_, T>(...)`). Switch to `query_as!` macros + `SQLX_OFFLINE=true` once Docker is available in dev to spin up a Postgres for `cargo sqlx prepare`.
+- **Worker writes Postgres directly**: per SAAS-PLAN §9.2 the worker should call back to api via per-job JWTs. MVP shortcut for Railway internal-network trust; revisit before splitting compute (Fly Machines) or opening worker to non-trusted networks.
+- **`coral_runner::MOCK_MODE = true`**: worker fakes its output. Flip to false + implement the real path once `worker/Dockerfile` is shipping a real coral binary (the download pattern is in the Dockerfile; pin a real release).
+
+## Commit hygiene
+
+- One logical feature per commit. Co-author trailer for Claude.
+- Every commit message says what `cargo check --workspace` returned at HEAD.
+- Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
