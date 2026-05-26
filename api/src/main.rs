@@ -8,13 +8,17 @@
 use std::net::SocketAddr;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
+mod audit;
 mod auth;
 mod config;
 mod db;
 mod error;
+mod github_app;
+mod idempotency;
 mod middleware;
 mod routes;
 mod state;
+mod stripe;
 
 use config::Config;
 use state::AppState;
