@@ -15,7 +15,17 @@ Fase 4 — Wiki render      🟡 R2 client + page render + worker upload done; q
 Fase 5 — Polish + launch  🟡 frontend scaffold done; Stripe checkout + landing pending
 ```
 
-`cargo check --workspace`, `cargo clippy --all-targets -D warnings`, and `cargo fmt --check` are clean. **18 tests pass** (`cargo test --workspace`): 8 api unit (wiki render, slug validation, job-token JWT), 6 worker unit (slugify, tarball roundtrip, JSON/cost parsing, secret scrubbing), 4 worker integration (hermetic full-pipeline runs: happy path, coral non-zero exit, timeout kill, missing-wiki failure).
+`cargo check --workspace`, `cargo clippy --all-targets -D warnings`, and `cargo fmt --check` are clean. **21 tests pass** (`cargo test --workspace`): 8 api unit (wiki render, slug validation, job-token JWT), 6 worker unit, 7 worker integration (hermetic full-pipeline: happy path, coral non-zero exit, timeout kill, missing-wiki failure, trufflehog fail-closed, trufflehog-missing skip, API-key scrub).
+
+### Security & robustness audit — 2026-08-25 (resolved)
+
+A full end-to-end review (with adversarial refutation agents) found 9 issues; all are fixed in code:
+
+- **CRITICAL — cross-tenant isolation leak (fixed):** `Repo` queries relied solely on RLS, which is inert because the migration only `ENABLE`s (never `FORCE`s) RLS and the app connects as the table owner/superuser. `GET /api/tenants/:tid/repos` leaked all tenants' repos; bootstrap could act on a foreign repo. Fixed by explicit `tenant_id` filters on `list_for_tenant`/`get_by_id` (the primary control per the CLAUDE.md invariant), a tenant check in `clone_token`, and a composite FK (migration 0002). **Still pending (deploy-side, A1):** `FORCE ROW LEVEL SECURITY` + a dedicated non-superuser role — can't be done in code without breaking the worker's pool callback paths.
+- **Secret-scan fail-open (fixed):** trufflehog non-zero exit no longer reads as a clean scan; the bootstrap fails closed (`secret_scan_error`). Missing binary still skips (documented MVP concession).
+- **API-key leak (fixed):** `ANTHROPIC_API_KEY` is scrubbed from coral's output before it reaches `jobs.error`/logs.
+- **Stuck `running` jobs/repos (fixed):** a new 5-min janitor reaps jobs whose worker died and releases their repos; also purges expired sessions.
+- **Grant TTLs / enqueue-failure / wiki-urls batching / CSRF validation / installation cross-tenant check** — all fixed (see git log 2026-08-25).
 
 The full path implemented in code (needs Railway + secrets to run live, see A1 in NEXT-SESSION.md):
 **login → OAuth → personal tenant auto-created → install GitHub App → repos appear → Run bootstrap → api pre-signs R2 URLs + mints per-job JWT → worker clones via installation token (header auth) → trufflehog gate → coral subprocess with timeout → wiki tarball + per-page upload to R2 → job + repo status updated → wiki pages render.**
