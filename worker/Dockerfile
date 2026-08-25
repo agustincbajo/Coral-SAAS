@@ -13,12 +13,20 @@ COPY api/Cargo.toml ./api/
 COPY worker/Cargo.toml ./worker/
 COPY shared/Cargo.toml ./shared/
 
+# Dummy sources so the dep build can happen without real code. The
+# workspace-local .fingerprint dirs must go too: COPYed real sources can
+# carry mtimes older than the dummies, so cargo would otherwise keep the
+# stale empty-crate artifacts (an empty `shared` breaks the real build).
 RUN mkdir -p api/src worker/src shared/src \
     && echo "fn main(){}" > api/src/main.rs \
     && echo "fn main(){}" > worker/src/main.rs \
+    && echo "" > worker/src/lib.rs \
     && echo "" > shared/src/lib.rs \
     && cargo build --release -p worker \
-    && rm -rf api/src worker/src shared/src
+    && rm -rf api/src worker/src shared/src \
+       target/release/.fingerprint/api-* \
+       target/release/.fingerprint/worker-* \
+       target/release/.fingerprint/shared-*
 
 COPY shared/src ./shared/src
 COPY api/src ./api/src
