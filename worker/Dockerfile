@@ -36,23 +36,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && useradd --system --uid 65532 --shell /usr/sbin/nologin coral
 
 # --- coral binary ---
-# Option A (recommended): pull a prebuilt release from upstream Coral.
-# When Coral publishes container images via GitHub Container Registry,
-# uncomment and pin to a specific SHA digest.
-#
-#   COPY --from=ghcr.io/agustincbajo/coral:v0.41@sha256:<digest> \
-#        /usr/local/bin/coral /usr/local/bin/coral
-#
-# Option B (current): download the release tarball at build time.
-# Replace CORAL_VERSION and the SHA when shipping.
-#
+# Vendored from the upstream release, pinned by version + sha256 (the
+# .sha256 asset published alongside the tarball). Bump both together.
+# The build FAILS if the fetch or checksum fails — a worker image without
+# a verified coral binary must never ship (set WORKER_MOCK_MODE=true at
+# runtime if you intentionally want a coral-less worker).
 ARG CORAL_VERSION=v0.41.0
+ARG CORAL_SHA256=3578f18cc6872bf344e1c5a482b49b8edff493d0aff582a19811f6e125435ccd
 RUN curl -fsSL "https://github.com/agustincbajo/Coral/releases/download/${CORAL_VERSION}/coral-${CORAL_VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
       -o /tmp/coral.tar.gz \
+    && echo "${CORAL_SHA256}  /tmp/coral.tar.gz" | sha256sum -c - \
     && tar -xzf /tmp/coral.tar.gz -C /usr/local/bin/ coral \
     && chmod +x /usr/local/bin/coral \
-    && rm /tmp/coral.tar.gz \
-    || echo "WARNING: Coral release fetch failed — worker will run in mock-mode (see coral_runner.rs)"
+    && rm /tmp/coral.tar.gz
 
 # --- trufflehog (secret scan pre-bootstrap, GAP #68) ---
 ARG TRUFFLEHOG_VERSION=3.83.7
