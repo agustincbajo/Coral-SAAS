@@ -140,11 +140,19 @@ What's NOT yet verified end-to-end:
 `.github/workflows/ci.yml` runs:
 - `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`
 - `pnpm typecheck`, `pnpm lint`
-- Trivy scan on api + worker images
+- Docker build of api + worker images, then Trivy scan (CRITICAL/HIGH, `ignore-unfixed`)
 
-**Will currently fail** because:
-- `cargo clippy -D warnings` — there are dead_code warnings (the api crate has `#![allow(dead_code)]` so this might pass; verify).
-- `pnpm install` will fail unless `GITHUB_PACKAGES_TOKEN` secret is set in GitHub Actions repo settings.
+**As of 2026-08-25** (first time ever): the Rust job and the container job are **green** —
+both images build for real and pass the vulnerability gate. Getting there surfaced and
+fixed a chain of latent Dockerfile bugs: builder image too old for the lockfile
+(`rust:1.83` → `1.95`), coral release tarball nesting (`--strip-components`), stale
+cargo fingerprints silently shipping a dummy `fn main(){}` api binary, missing
+`COPY migrations` (compile-time `sqlx::migrate!`), bookworm→trixie runtime, and an
+outdated trufflehog with 57 fixed-upstream CVEs (→ 3.97.1).
+
+**Still failing (expected)**: the Next.js job — `pnpm install` needs the
+`GITHUB_PACKAGES_TOKEN` secret in GitHub Actions repo settings (user-held, part of A1).
+The separate "Deploy to Railway" workflow also fails until Railway is configured.
 
 ## What's next (in priority order)
 

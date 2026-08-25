@@ -21,6 +21,8 @@
 > - 🐛 Fix de bug preexistente: el row id de `jobs` y el `job_id` del spec en Redis se generaban por separado — el claim del worker nunca matcheaba y todo job quedaba `queued` para siempre. Ahora el insert usa `spec.job_id`.
 >
 > **Lo único bloqueante para un MVP vivo es A1 (setup manual, abajo) + smoke test.** Nueva env var del worker: `API_BASE_URL`.
+>
+> CI: jobs de Rust y de containers (build de imágenes + Trivy) en verde por primera vez — quedaron arreglados 6 bugs latentes de los Dockerfiles (ver STATUS.md §CI). Solo sigue rojo el job de Next.js por el secret `GITHUB_PACKAGES_TOKEN` (A1).
 
 ---
 
