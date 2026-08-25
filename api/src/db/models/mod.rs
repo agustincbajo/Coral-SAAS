@@ -10,6 +10,6 @@ pub use github_installation::GithubInstallation;
 pub use job::Job;
 pub use repo::Repo;
 pub use session::Session;
-pub use tenant::{Tenant, TenantPlan};
+pub use tenant::Tenant;
 pub use tenant_member::{TenantMember, TenantRole};
 pub use user::User;
