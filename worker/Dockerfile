@@ -61,7 +61,7 @@ RUN curl -fsSL "https://github.com/agustincbajo/Coral/releases/download/${CORAL_
     && rm /tmp/coral.tar.gz
 
 # --- trufflehog (secret scan pre-bootstrap, GAP #68) ---
-ARG TRUFFLEHOG_VERSION=3.83.7
+ARG TRUFFLEHOG_VERSION=3.97.1
 RUN curl -fsSL "https://github.com/trufflesecurity/trufflehog/releases/download/v${TRUFFLEHOG_VERSION}/trufflehog_${TRUFFLEHOG_VERSION}_linux_amd64.tar.gz" \
       -o /tmp/trufflehog.tar.gz \
     && tar -xzf /tmp/trufflehog.tar.gz -C /usr/local/bin/ trufflehog \
