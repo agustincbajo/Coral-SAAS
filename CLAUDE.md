@@ -77,8 +77,8 @@ The worker Dockerfile copies the `coral` binary from a pinned upstream release. 
 
 - **`#![allow(dead_code)]` in api/src/main.rs**: scaffold-time concession; remove before launch and address each warning specifically.
 - **No sqlx prepare metadata**: queries are runtime-typed (`sqlx::query_as::<_, T>(...)`). Switch to `query_as!` macros + `SQLX_OFFLINE=true` once Docker is available in dev to spin up a Postgres for `cargo sqlx prepare`.
-- **Worker writes Postgres directly**: per SAAS-PLAN §9.2 the worker should call back to api via per-job JWTs. MVP shortcut for Railway internal-network trust; revisit before splitting compute (Fly Machines) or opening worker to non-trusted networks.
-- **`coral_runner::MOCK_MODE = true`**: worker fakes its output. Flip to false + implement the real path once `worker/Dockerfile` is shipping a real coral binary (the download pattern is in the Dockerfile; pin a real release).
+- **Worker writes job/repo outcomes to Postgres directly**: per SAAS-PLAN §9.2 those should go through api callbacks. The per-job JWT internal API already exists for GitHub/R2 grants (`/api/internal/jobs/:id/{clone-token,wiki-urls}`); moving the outcome writes behind it is the remaining half of Track A5. MVP shortcut for Railway internal-network trust; revisit before splitting compute (Fly Machines) or opening worker to non-trusted networks.
+- **Coral CLI contract unverified live**: the worker invokes `coral <cmd> --wiki-root .wiki --provider anthropic_api --json [--max-cost N]` per SAAS-PLAN §9.2. The real path is implemented and hermetically tested against a fake coral honoring that contract (mock mode is now opt-in via `WORKER_MOCK_MODE=true`), but no live run against the real binary has happened yet — validate on first deployed bootstrap.
 
 ## Commit hygiene
 

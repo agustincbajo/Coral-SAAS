@@ -9,8 +9,18 @@
 > 4. `docs/SAAS-PLAN-GAPS.md` — 70 gaps de producción identificados
 > 5. Este archivo — qué hacer ahora
 
-**Última actualización**: fin de sesión autónoma 2026-05-25.
-**Estado del repo**: 9 commits, `cargo check --workspace` limpio, 4/4 tests pasan, todo pusheado a `main`.
+**Última actualización**: sesión 2026-08-25 (anterior: 2026-05-25).
+**Estado del repo**: `cargo check` + `clippy -D warnings` + `fmt --check` limpios, 18/18 tests pasan.
+
+> **Update 2026-08-25** — el critical path de código se completó:
+> - ✅ **A2** — release Coral v0.41.0 existe upstream con el asset Linux x86_64; Dockerfile pineado por versión + sha256 (build falla si el checksum no matchea).
+> - ✅ **A3** — `coral_runner.rs` ejecuta el pipeline real (clone → trufflehog → coral con timeout → package → upload). Mock ahora es `WORKER_MOCK_MODE=true` por env (default false). 4 tests de integración herméticos lo cubren sin Docker.
+> - ✅ **A4** — el api pre-firma GET/PUT de R2 y mintea un JWT por-job al enqueue.
+> - 🟡 **A5** — mitad hecha: rutas internas `/api/internal/jobs/:id/{clone-token,wiki-urls}` autenticadas con el JWT por-job (el installation token ya NO viaja por Redis). Falta mover los writes de outcome (jobs/repos) detrás del API.
+> - ✅ **A6** — el worker sube tarball + cada página `.md` individual (opción 1).
+> - 🐛 Fix de bug preexistente: el row id de `jobs` y el `job_id` del spec en Redis se generaban por separado — el claim del worker nunca matcheaba y todo job quedaba `queued` para siempre. Ahora el insert usa `spec.job_id`.
+>
+> **Lo único bloqueante para un MVP vivo es A1 (setup manual, abajo) + smoke test.** Nueva env var del worker: `API_BASE_URL`.
 
 ---
 
@@ -86,7 +96,7 @@ Cada item tiene:
 
 ---
 
-### A2 (P0) — Vendoreo del binario Coral en el worker
+### ✅ A2 (P0) — Vendoreo del binario Coral en el worker — HECHO 2026-08-25
 
 🎯 **Qué**: que el worker arranque con el binario `coral` disponible en `/usr/local/bin/coral`.
 
@@ -106,7 +116,7 @@ Cada item tiene:
 
 ---
 
-### A3 (P0) — Flipear `MOCK_MODE = false` y wirear el subprocess real
+### ✅ A3 (P0) — Flipear `MOCK_MODE = false` y wirear el subprocess real — HECHO 2026-08-25
 
 🎯 **Qué**: que el worker ejecute `coral` de verdad en lugar de simular trabajo con un `sleep(2s)`.
 
@@ -142,7 +152,7 @@ Cada item tiene:
 
 ---
 
-### A4 (P0) — Mint de pre-signed URLs al enqueue
+### ✅ A4 (P0) — Mint de pre-signed URLs al enqueue — HECHO 2026-08-25
 
 🎯 **Qué**: cuando el `api` encola un job, debe incluir `wiki_get_url` (si existe wiki previo) y `wiki_put_url` (TTL ≥ job timeout × 1.2) en el `JobSpec`.
 
@@ -161,7 +171,7 @@ Cada item tiene:
 
 ---
 
-### A5 (P1) — Worker → API callbacks vía JWT corto (en lugar de DB directo)
+### 🟡 A5 (P1) — Worker → API callbacks vía JWT corto (en lugar de DB directo) — MITAD HECHA 2026-08-25 (grants sí, outcome writes no)
 
 🎯 **Qué**: que el worker no escriba directamente a Postgres. En vez, callee a `/api/internal/jobs/:id/complete` con un JWT corto firmado per-job.
 
@@ -180,7 +190,7 @@ Cada item tiene:
 
 ---
 
-### A6 (P0) — Wiki tarball extraction al subir desde el worker
+### ✅ A6 (P0) — Wiki tarball extraction al subir desde el worker — HECHO 2026-08-25 (opción 1)
 
 🎯 **Qué**: cuando el worker sube `wiki.tar.zst` a R2, descomprimir y guardar cada `.md` individual en la key esperada por el render endpoint.
 
@@ -451,23 +461,22 @@ Recomendación: **Opción 1** — el worker sube `wiki/<slug>.md` por cada archi
 
 ---
 
-## Orden recomendado para retomar
+## Orden recomendado para retomar (actualizado 2026-08-25)
 
 Si la siguiente sesión tiene **3-4 horas**:
-1. A1 — setup manual (1-2h, no autónomo, pero bloqueante)
-2. A2 — vendoreo binario coral (30min-1h)
-3. A4 — pre-signed URLs al enqueue (1h)
+1. A1 — setup manual (1-2h, no autónomo, bloqueante; incluir `API_BASE_URL` en el worker)
+2. Deploy + smoke test del flow completo con un repo real chico
+3. Ajustar `coral_runner.rs` si el CLI real de coral difiere del contrato asumido (`--wiki-root/--provider/--max-cost/--json`)
 
 Si la siguiente sesión tiene **un día completo**:
-1. A1 + A2 + A4 (mañana)
-2. A3 — worker subprocess real (tarde)
-3. Smoke test del flow completo
+1. A1 + smoke test (mañana)
+2. B1 — query endpoint + SSE (tarde; el worker ya dispatchea `JobKind::Query`)
 
 Si la siguiente sesión tiene **una semana**:
-1. Día 1: A1-A6 (critical path completo) → MVP funcional
+1. Día 1: A1 + smoke test → MVP funcional vivo
 2. Día 2-3: B1 (query SSE) + B3 (Stripe checkout)
 3. Día 4: B4 (polish frontend con modo-bo-ui-lib)
-4. Día 5: C1 (tests de integración) + C2-C3 (security gaps)
+4. Día 5: A5 restante (outcome writes vía API) + C2-C3 (security gaps); C1 si ya hay Docker
 
 ---
 

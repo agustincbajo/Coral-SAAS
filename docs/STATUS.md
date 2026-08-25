@@ -1,6 +1,6 @@
 # Coral-SAAS — Build Status
 
-> Last updated by autonomous Claude session ending 2026-05-25.
+> Last updated by Claude session of 2026-08-25 (previous: 2026-05-25).
 
 This document tracks what's been built, what compiles, what works, and what doesn't. Read alongside `SAAS-PLAN.md` (the target architecture) and `SAAS-PLAN-GAPS.md` (the 70 production gaps).
 
@@ -10,19 +10,19 @@ This document tracks what's been built, what compiles, what works, and what does
 Fase 0 — Setup            ✅ done
 Fase 1 — Auth + tenant    ✅ done
 Fase 2 — GitHub App       ✅ done (webhook handler + install callback)
-Fase 3 — Job system       🟡 wired end-to-end with MOCK coral subprocess
-Fase 4 — Wiki render      🟡 R2 client + page render done; query SSE pending
+Fase 3 — Job system       ✅ done in code — REAL coral subprocess pipeline, hermetically tested
+Fase 4 — Wiki render      🟡 R2 client + page render + worker upload done; query SSE pending
 Fase 5 — Polish + launch  🟡 frontend scaffold done; Stripe checkout + landing pending
 ```
 
-`cargo check --workspace` is clean. 4 unit tests pass (`cargo test -p api --bin api`).
+`cargo check --workspace`, `cargo clippy --all-targets -D warnings`, and `cargo fmt --check` are clean. **18 tests pass** (`cargo test --workspace`): 8 api unit (wiki render, slug validation, job-token JWT), 6 worker unit (slugify, tarball roundtrip, JSON/cost parsing, secret scrubbing), 4 worker integration (hermetic full-pipeline runs: happy path, coral non-zero exit, timeout kill, missing-wiki failure).
 
-The first end-to-end path that works today (with secrets configured):
-**login → OAuth → personal tenant auto-created → repos list (empty) → install GitHub App → install callback links it to tenant → repos appear → Run bootstrap → mock job runs → status updates to succeeded.**
+The full path implemented in code (needs Railway + secrets to run live, see A1 in NEXT-SESSION.md):
+**login → OAuth → personal tenant auto-created → install GitHub App → repos appear → Run bootstrap → api pre-signs R2 URLs + mints per-job JWT → worker clones via installation token (header auth) → trufflehog gate → coral subprocess with timeout → wiki tarball + per-page upload to R2 → job + repo status updated → wiki pages render.**
 
-What's NOT yet end-to-end:
-- Bootstrap producing real wiki content (worker runs in mock-mode until the Coral binary is vendored in the worker Docker image — the path is laid out in `worker/Dockerfile`).
-- Wiki page rendering against real R2 content (the route works, but there are no objects to fetch until a real bootstrap runs).
+What's NOT yet verified end-to-end:
+- A live run against real GitHub/R2/Railway (all code paths are exercised by the hermetic integration tests with a fake coral + local git remote + in-process R2 substitute; a real `coral bootstrap` against a real repo needs the A1 manual setup).
+- The exact CLI contract of the real coral binary (`--wiki-root/--provider/--max-cost/--json` per SAAS-PLAN §9.2 comments) — verify on first live run.
 
 ## What's implemented (by feature)
 
@@ -73,14 +73,20 @@ What's NOT yet end-to-end:
 ### Jobs & Worker (`api/src/jobs/`, `worker/`)
 
 - ✅ Job model: create → claim (atomic UPDATE WHERE status='queued') → complete.
-- ✅ Enqueue: DB insert through RLS tx + RPUSH to Redis `coral:jobs` queue.
-- ✅ Worker: BLPOP loop, atomic claim, mock subprocess (2s sleep + fake JobResult), persist outcome.
+- ✅ Enqueue: DB insert through RLS tx + RPUSH to Redis `coral:jobs` queue. **The jobs row id IS `spec.job_id`** — a 2026-08-25 fix; previously the row and the Redis spec had independently generated UUIDs, so the worker's claim-by-id never matched and every job sat in `queued` forever (the mock "end-to-end" path was actually broken).
+- ✅ Bootstrap enqueue (`routes/jobs.rs`): atomic `bootstrap_status` gate (no duplicate concurrent bootstraps), pre-signed R2 PUT for the wiki tarball (TTL = timeout × 1.2) + GET for a prior wiki, per-job JWT minted with `WORKER_JWT_SECRET`.
+- ✅ Internal worker API (`routes/internal_jobs.rs`), authenticated per-job JWT (HS256, aud=worker, sub=job_id, tenant cross-check, job must be `running`):
+  - `POST /api/internal/jobs/:id/clone-token` → short-lived GitHub installation token (so it never sits in Redis).
+  - `POST /api/internal/jobs/:id/wiki-urls` `{slugs}` → pre-signed PUT per wiki page (slug-validated, ≤500/request).
+- ✅ **Real coral subprocess pipeline** (`worker/src/coral_runner.rs`): fresh workdir → shallow clone (installation token via `Authorization: basic` header, never in the URL; scrubbed from all captured output) → restore prior wiki tarball if provided → trufflehog gate (bootstrap; verified findings ⇒ `failure_reason=secrets_detected`, missing binary ⇒ warn+skip) → `coral <cmd> --wiki-root .wiki --provider anthropic_api --json [--max-cost N]` with per-kind timeout + kill-on-drop → parse stdout JSON (fallback `.coral/.bootstrap-state.json` for cost/tokens, tolerant nested search) → tar+zstd the `.wiki/` (pure Rust, no system tar) → upload tarball via spec PUT URL + each page via minted per-page URLs (nested paths slugified `guides/Auth Flow.md` → `guides-auth-flow`) → workdir cleanup always.
+- ✅ Mock mode now env-driven: `WORKER_MOCK_MODE=true` (default **false**). Worker requires `API_BASE_URL` unless mocked.
+- ✅ Classified failures in `JobResult.failure_reason`: `secrets_detected`, `timeout`, `coral_exit`, `clone_failed`, `no_wiki`, `unsupported_kind`, `invalid_args` (+ `worker_panic` for infra errors). Worker mirrors bootstrap outcome onto `repos.bootstrap_status` (`ready`/`failed`) + `wiki_s3_key` + `bootstrap_cost_usd`.
 - ✅ Suicide-restart after `WORKER_MAX_JOBS` (default 100) — Railway auto-restarts clean (closes leak risk per §9.4).
-- 🟡 Real coral subprocess: scaffolded in `worker/src/coral_runner.rs` behind `MOCK_MODE = true` const. Real path outline documented inline. Vendoring of the coral binary set up in `worker/Dockerfile` with a download-from-release pattern; pin a real version + SHA when shipping.
-- 🟡 trufflehog secret scan (GAP #68): binary install scaffolded in worker/Dockerfile, not yet wired in `coral_runner.rs`.
-- ❌ Worker → API callbacks via JWT (per SAAS-PLAN §9.2) — currently the worker writes directly to Postgres. MVP-acceptable on Railway internal network; needs JWT layer before scale-out to Fly Machines.
+- ✅ Coral binary vendored in `worker/Dockerfile`: release v0.41.0 (exists upstream, verified) pinned by sha256; **build fails** if fetch/checksum fails.
+- ❌ Worker still writes job/repo outcomes directly to Postgres (SAAS-PLAN §9.2 / GAP #32) — the JWT internal API covers GitHub/R2 grants only. Moving the outcome writes behind it is the remaining piece of Track A5.
 - ❌ Job cancellation flow (GAP #60).
 - ❌ SSE endpoint for live job status — frontend polls instead (queries.ts `useJob` with refetchInterval).
+- ⚠️ Timeout kills the direct child only; grandchildren spawned by coral could linger until container restart (fine on Railway one-job-per-replica; revisit with process groups if that changes).
 
 ### Wiki (`api/src/wiki/`, `api/src/r2/`, `api/src/routes/wiki.rs`)
 
@@ -89,7 +95,7 @@ What's NOT yet end-to-end:
 - ✅ Markdown render: `pulldown-cmark` (tables, footnotes, strikethrough, tasklists, smart punctuation) + `ammonia` sanitizer (allowlists `class` on code/pre for syntax hint preservation).
 - ✅ Page route: `/api/tenants/:tenant_id/repos/:repo_id/wiki/:slug` with slug-regex guard (`[a-z0-9-]+`) against path traversal.
 - ✅ Unit tests: heading extraction, script-tag stripping, code-class preservation, slug validation.
-- ❌ Wiki tarball extraction on worker upload — currently we expect per-page `.md` objects in R2; worker would need to extract `wiki.tar.zst` and write each page. Trivial to add but not done.
+- ✅ Worker uploads both the `wiki.tar.zst` tarball (backup/portability, key stored in `repos.wiki_s3_key`) AND each page as `tenants/<t>/repos/<r>/wiki/<slug>.md` — exactly what this render endpoint reads. (Was the old "tarball extraction" gap — resolved worker-side per NEXT-SESSION A6 option 1.)
 - ❌ Wiki TF-IDF search (GAP #40) — only LLM queries via worker.
 - ❌ Page navigation / sidebar of slugs.
 - ❌ Backlinks display.
@@ -122,9 +128,12 @@ What's NOT yet end-to-end:
 
 ## Test coverage
 
-- ✅ 4 unit tests pass: 3 in `wiki::render`, 1 in `routes::wiki`.
-- ❌ Zero integration tests (require Postgres, blocked on Docker).
-- ❌ Zero E2E tests against the full stack.
+- ✅ 18 tests pass (`cargo test --workspace`):
+  - api (8): wiki render ×3, slug validation, job-token JWT mint/verify ×4.
+  - worker unit (6): slugify, tarball create/extract roundtrip, cost/token extraction, stdout JSON parsing, secret scrubbing, page collection.
+  - worker integration (4, hermetic — local git remote + fake `coral` script + in-process axum standing in for the control plane and R2): happy-path bootstrap with uploads verified byte-for-byte, coral non-zero exit classified, timeout kill, no-wiki failure. Run on Windows and Linux alike (no Docker needed).
+- ❌ No integration tests against real Postgres/RLS (require Docker).
+- ❌ Zero E2E tests against the full deployed stack.
 
 ## CI status
 
@@ -139,13 +148,9 @@ What's NOT yet end-to-end:
 
 ## What's next (in priority order)
 
-1. **Configure secrets in Railway + GitHub Actions**:
-   - `GITHUB_PACKAGES_TOKEN` (PAT with `read:packages`) — unblocks pnpm install.
-   - All env vars from `.env.example` — unblock api runtime.
-2. **Spin up Railway services + Postgres add-on + Redis add-on**.
-3. **Create the GitHub App and OAuth App** on GitHub side; fill in IDs + private key + webhook secret.
-4. **Vendor the Coral binary** in `worker/Dockerfile` — currently fetches from a release URL that may not exist yet; ship a real release or copy from local builds.
-5. **Flip `MOCK_MODE = false`** in `coral_runner.rs` and implement the real subprocess path (clone → trufflehog → coral → upload).
-6. **Add query endpoint** with SSE for live LLM responses.
-7. **Add Stripe checkout endpoint** + frontend upgrade button.
-8. **Address remaining GAPs** in priority order from SAAS-PLAN-GAPS.md TOP 10.
+1. **A1 — manual setup** (user-driven, ~1-2h): Railway project + Postgres/Redis add-ons, GitHub OAuth App + GitHub App, R2 bucket + keys, Stripe test mode, `GITHUB_PACKAGES_TOKEN`. Steps in NEXT-SESSION.md §A1. New env vars since then: `API_BASE_URL` (worker → api internal URL) and optionally `WORKER_MOCK_MODE`.
+2. **Live smoke test**: deploy, connect a small real repo, run bootstrap, verify wiki renders. First live run validates the coral CLI contract (`--wiki-root/--provider/--max-cost/--json`) — adjust `coral_runner.rs` arg building if the real binary differs.
+3. **Add query endpoint** with SSE for live LLM responses (B1 — runner already dispatches `JobKind::Query`).
+4. **Add Stripe checkout endpoint** + frontend upgrade button (B3).
+5. **Finish A5**: move worker's job/repo outcome writes behind the internal JWT API (grants half is done).
+6. **Address remaining GAPs** in priority order from SAAS-PLAN-GAPS.md TOP 10.
