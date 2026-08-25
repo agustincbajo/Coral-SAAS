@@ -29,7 +29,9 @@ RUN mkdir -p api/src worker/src shared/src \
        target/release/.fingerprint/worker-* \
        target/release/.fingerprint/shared-*
 
-# Real source build.
+# Real source build. migrations/ is embedded into the binary at compile
+# time by sqlx::migrate!("../migrations") in api/src/main.rs.
+COPY migrations ./migrations
 COPY shared/src ./shared/src
 COPY api/src ./api/src
 COPY worker/src ./worker/src
