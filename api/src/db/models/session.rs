@@ -56,9 +56,11 @@ impl Session {
     /// Janitor: drop everything past its expiry. Called from a periodic
     /// task — keeps the `sessions` table from growing forever.
     pub async fn purge_expired(pool: &PgPool) -> Result<u64, sqlx::Error> {
-        Ok(sqlx::query("DELETE FROM sessions WHERE expires_at <= now()")
-            .execute(pool)
-            .await?
-            .rows_affected())
+        Ok(
+            sqlx::query("DELETE FROM sessions WHERE expires_at <= now()")
+                .execute(pool)
+                .await?
+                .rows_affected(),
+        )
     }
 }

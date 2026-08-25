@@ -17,10 +17,7 @@ use axum::{
     Router,
 };
 use serde::Deserialize;
-use tower_cookies::{
-    cookie::SameSite,
-    Cookie, Cookies, Key,
-};
+use tower_cookies::{cookie::SameSite, Cookie, Cookies, Key};
 use uuid::Uuid;
 
 const OAUTH_STATE_COOKIE: &str = "coral_oauth_state";
@@ -74,8 +71,7 @@ async fn callback(
     // Burn the nonce.
     cookies.remove(Cookie::from(OAUTH_STATE_COOKIE));
 
-    let access_token =
-        github_oauth::exchange_code(app.http(), app.config(), &query.code).await?;
+    let access_token = github_oauth::exchange_code(app.http(), app.config(), &query.code).await?;
 
     let gh = github_oauth::fetch_user(app.http(), &access_token).await?;
 
@@ -119,7 +115,11 @@ async fn logout(
 
     cookies.add(build_clear_session_cookie());
 
-    Ok(([("content-type", "application/json")], "{\"status\":\"ok\"}").into_response())
+    Ok((
+        [("content-type", "application/json")],
+        "{\"status\":\"ok\"}",
+    )
+        .into_response())
 }
 
 /// Ensure the user has at least one tenant they own. Idempotent — if
@@ -183,7 +183,8 @@ async fn unique_slug(pool: &sqlx::PgPool, base: &str) -> ApiResult<String> {
         }
     }
     Err(ApiError::Internal(anyhow::anyhow!(
-        "exhausted slug candidates for {}", base
+        "exhausted slug candidates for {}",
+        base
     )))
 }
 

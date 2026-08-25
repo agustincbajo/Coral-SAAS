@@ -50,8 +50,8 @@ impl FromRequestParts<AppState> for AuthUser {
             .get(SESSION_COOKIE)
             .ok_or_else(|| ApiError::Unauthorized.into_response())?;
 
-        let session_id = Uuid::from_str(cookie.value())
-            .map_err(|_| ApiError::Unauthorized.into_response())?;
+        let session_id =
+            Uuid::from_str(cookie.value()).map_err(|_| ApiError::Unauthorized.into_response())?;
 
         let session = Session::lookup(state.db(), session_id)
             .await

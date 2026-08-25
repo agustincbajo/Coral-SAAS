@@ -52,15 +52,15 @@ pub struct R2Config {
 impl Config {
     pub fn from_env() -> Result<Self> {
         let session_secret_hex = require_env("SESSION_SECRET")?;
-        let session_secret = hex::decode(&session_secret_hex)
-            .context("SESSION_SECRET must be hex-encoded")?;
+        let session_secret =
+            hex::decode(&session_secret_hex).context("SESSION_SECRET must be hex-encoded")?;
         if session_secret.len() < 32 {
             anyhow::bail!("SESSION_SECRET must be at least 32 bytes (64 hex chars)");
         }
 
         let worker_jwt_secret_hex = require_env("WORKER_JWT_SECRET")?;
-        let worker_jwt_secret = hex::decode(&worker_jwt_secret_hex)
-            .context("WORKER_JWT_SECRET must be hex-encoded")?;
+        let worker_jwt_secret =
+            hex::decode(&worker_jwt_secret_hex).context("WORKER_JWT_SECRET must be hex-encoded")?;
         if worker_jwt_secret.len() < 32 {
             anyhow::bail!("WORKER_JWT_SECRET must be at least 32 bytes (64 hex chars)");
         }
@@ -125,7 +125,5 @@ fn load_github_app_private_key() -> Result<String> {
     if let Ok(pem) = std::env::var("GITHUB_APP_PRIVATE_KEY") {
         return Ok(pem.replace("\\n", "\n"));
     }
-    anyhow::bail!(
-        "neither GITHUB_APP_PRIVATE_KEY_PATH nor GITHUB_APP_PRIVATE_KEY env var is set"
-    )
+    anyhow::bail!("neither GITHUB_APP_PRIVATE_KEY_PATH nor GITHUB_APP_PRIVATE_KEY env var is set")
 }

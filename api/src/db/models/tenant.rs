@@ -37,11 +37,7 @@ pub struct Tenant {
 }
 
 impl Tenant {
-    pub async fn create(
-        pool: &PgPool,
-        slug: &str,
-        name: &str,
-    ) -> Result<Self, sqlx::Error> {
+    pub async fn create(pool: &PgPool, slug: &str, name: &str) -> Result<Self, sqlx::Error> {
         sqlx::query_as::<_, Tenant>(
             r#"
             INSERT INTO tenants (slug, name)
@@ -75,10 +71,7 @@ impl Tenant {
     /// List tenants a user is a member of. Bypasses RLS via direct
     /// `users` + `tenant_members` join (no tenant filter required since
     /// we filter by user_id).
-    pub async fn list_for_user(
-        pool: &PgPool,
-        user_id: Uuid,
-    ) -> Result<Vec<Self>, sqlx::Error> {
+    pub async fn list_for_user(pool: &PgPool, user_id: Uuid) -> Result<Vec<Self>, sqlx::Error> {
         sqlx::query_as::<_, Tenant>(
             r#"
             SELECT t.id, t.slug, t.name, t.plan, t.stripe_customer_id,

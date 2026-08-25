@@ -15,17 +15,14 @@ use crate::{
     db::models::{GithubInstallation, Repo},
     db::{self},
     error::{ApiError, ApiResult},
-    github_app::webhook::{verify_signature, EventKind, DELIVERY_HEADER, EVENT_HEADER, SIGNATURE_HEADER},
+    github_app::webhook::{
+        verify_signature, EventKind, DELIVERY_HEADER, EVENT_HEADER, SIGNATURE_HEADER,
+    },
     idempotency,
     state::AppState,
 };
 use axum::{
-    body::Bytes,
-    extract::State,
-    http::HeaderMap,
-    response::IntoResponse,
-    routing::post,
-    Router,
+    body::Bytes, extract::State, http::HeaderMap, response::IntoResponse, routing::post, Router,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -215,12 +212,10 @@ async fn handle_installation_repositories(app: &AppState, payload: &Value) -> Ap
         }
         "removed" => {
             for r in &p.repositories_removed {
-                sqlx::query(
-                    "UPDATE repos SET disconnected_at = now() WHERE github_repo_id = $1",
-                )
-                .bind(r.id)
-                .execute(&mut *tx)
-                .await?;
+                sqlx::query("UPDATE repos SET disconnected_at = now() WHERE github_repo_id = $1")
+                    .bind(r.id)
+                    .execute(&mut *tx)
+                    .await?;
             }
         }
         other => tracing::debug!(action = %other, "unhandled installation_repositories action"),
@@ -272,12 +267,10 @@ async fn handle_repository(app: &AppState, payload: &Value) -> ApiResult<()> {
             .await?;
         }
         "deleted" => {
-            sqlx::query(
-                "UPDATE repos SET disconnected_at = now() WHERE github_repo_id = $1",
-            )
-            .bind(p.repository.id)
-            .execute(&mut *tx)
-            .await?;
+            sqlx::query("UPDATE repos SET disconnected_at = now() WHERE github_repo_id = $1")
+                .bind(p.repository.id)
+                .execute(&mut *tx)
+                .await?;
         }
         _ => {}
     }

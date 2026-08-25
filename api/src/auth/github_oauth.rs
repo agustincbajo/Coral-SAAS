@@ -52,7 +52,10 @@ pub fn authorize_url(config: &Config, state: &str) -> String {
 }
 
 pub fn callback_url(config: &Config) -> String {
-    format!("{}/auth/github/callback", config.public_base_url.trim_end_matches('/'))
+    format!(
+        "{}/auth/github/callback",
+        config.public_base_url.trim_end_matches('/')
+    )
 }
 
 /// Step 2: exchange the temporary `code` for an access token.

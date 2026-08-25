@@ -31,7 +31,9 @@ async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
 
     tracing_subscriber::registry()
-        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,api=debug")))
+        .with(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,api=debug")),
+        )
         .with(tracing_subscriber::fmt::layer().json())
         .init();
 

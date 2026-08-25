@@ -15,8 +15,8 @@
 //! handler is idempotent so order-of-arrival doesn't matter.
 
 use crate::{
-    auth::AuthUser,
     audit::{self, Actor, AuditEntry},
+    auth::AuthUser,
     db::{
         self,
         models::{GithubInstallation, Repo, Tenant, TenantMember},

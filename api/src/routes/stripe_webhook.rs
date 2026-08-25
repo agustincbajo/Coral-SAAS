@@ -8,7 +8,9 @@ use crate::{
     state::AppState,
     stripe::webhook::{verify_signature, SIGNATURE_HEADER},
 };
-use axum::{body::Bytes, extract::State, http::HeaderMap, response::IntoResponse, routing::post, Router};
+use axum::{
+    body::Bytes, extract::State, http::HeaderMap, response::IntoResponse, routing::post, Router,
+};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -44,13 +46,12 @@ async fn webhook(
 
     // Idempotency via `stripe_events` table — strongly consistent,
     // unlike the Redis-based GitHub idempotency.
-    let inserted = sqlx::query(
-        "INSERT INTO stripe_events (id) VALUES ($1) ON CONFLICT (id) DO NOTHING",
-    )
-    .bind(&event.id)
-    .execute(app.db())
-    .await?
-    .rows_affected();
+    let inserted =
+        sqlx::query("INSERT INTO stripe_events (id) VALUES ($1) ON CONFLICT (id) DO NOTHING")
+            .bind(&event.id)
+            .execute(app.db())
+            .await?
+            .rows_affected();
 
     if inserted == 0 {
         tracing::info!(event_id = %event.id, "stripe webhook duplicate, skipping");
@@ -61,8 +62,7 @@ async fn webhook(
 
     match event.event_type.as_str() {
         "checkout.session.completed" => handle_checkout_completed(&app, &event.data.object).await?,
-        "customer.subscription.created"
-        | "customer.subscription.updated" => {
+        "customer.subscription.created" | "customer.subscription.updated" => {
             handle_subscription_updated(&app, &event.data.object).await?
         }
         "customer.subscription.deleted" => {

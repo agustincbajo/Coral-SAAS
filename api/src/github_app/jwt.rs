@@ -18,13 +18,14 @@ struct AppClaims {
 pub fn sign(config: &GithubAppConfig) -> Result<String, ApiError> {
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     let claims = AppClaims {
-        iat: now - 60,            // small backdate for clock skew
+        iat: now - 60, // small backdate for clock skew
         exp: now + 9 * 60,
         iss: config.app_id.clone(),
     };
 
-    let key = EncodingKey::from_rsa_pem(config.private_key_pem.as_bytes())
-        .map_err(|e| ApiError::Internal(anyhow::anyhow!("invalid GitHub App private key: {}", e)))?;
+    let key = EncodingKey::from_rsa_pem(config.private_key_pem.as_bytes()).map_err(|e| {
+        ApiError::Internal(anyhow::anyhow!("invalid GitHub App private key: {}", e))
+    })?;
 
     encode(&Header::new(Algorithm::RS256), &claims, &key).map_err(ApiError::Jwt)
 }
