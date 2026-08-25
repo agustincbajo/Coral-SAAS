@@ -55,6 +55,12 @@ async fn main() -> anyhow::Result<()> {
         .build()?;
 
     let state = AppState::new(config, db, redis, http);
+
+    // Background janitor: reap stale/orphaned jobs (release repos stuck at
+    // bootstrap_status='running' when a worker dies) and purge expired
+    // sessions. Best-effort; a failing pass is logged and retried next tick.
+    tokio::spawn(janitor(state.clone()));
+
     let app = routes::build_router(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
@@ -64,4 +70,23 @@ async fn main() -> anyhow::Result<()> {
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+/// Periodic maintenance loop. Runs every 5 minutes for the life of the
+/// process; each pass is independent and best-effort.
+async fn janitor(state: AppState) {
+    let mut ticker = tokio::time::interval(std::time::Duration::from_secs(5 * 60));
+    // The immediate first tick makes startup reap anything left stale by a
+    // prior crash/redeploy.
+    loop {
+        ticker.tick().await;
+        if let Err(e) = jobs::reap_stale_jobs(&state).await {
+            tracing::error!(error = ?e, "janitor: reap_stale_jobs failed");
+        }
+        match db::models::Session::purge_expired(state.db()).await {
+            Ok(n) if n > 0 => tracing::info!(purged = n, "janitor: expired sessions purged"),
+            Ok(_) => {}
+            Err(e) => tracing::error!(error = ?e, "janitor: purge_expired failed"),
+        }
+    }
 }

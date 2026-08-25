@@ -4,7 +4,7 @@
 //! Authorization: requires AuthUser + tenant membership.
 
 use crate::{
-    auth::AuthUser,
+    auth::{csrf, AuthUser},
     db::{
         self,
         models::{Job, Repo, TenantMember},
@@ -15,6 +15,7 @@ use crate::{
 };
 use axum::{
     extract::{Path, State},
+    http::HeaderMap,
     routing::{get, post},
     Json, Router,
 };
@@ -22,7 +23,13 @@ use serde::Serialize;
 use serde_json::json;
 use shared::{JobKind, JobSpec};
 use std::time::Duration;
+use tower_cookies::Cookies;
 use uuid::Uuid;
+
+/// Extra head-room, on top of a job's own timeout, for pre-signed grants to
+/// survive a queue backlog before the worker claims the job. 60 min covers a
+/// deep queue without making a leaked spec's write window unreasonably long.
+const GRANT_QUEUE_BUFFER_SECS: u64 = 60 * 60;
 
 #[derive(Debug, Serialize)]
 struct JobDto {
@@ -54,8 +61,14 @@ impl From<Job> for JobDto {
 async fn start_bootstrap(
     State(app): State<AppState>,
     Path((tenant_id, repo_id)): Path<(Uuid, Uuid)>,
+    cookies: Cookies,
+    headers: HeaderMap,
     user: AuthUser,
 ) -> ApiResult<Json<JobDto>> {
+    // CSRF: this is a cookie-authenticated state-changing POST, so the
+    // double-submit token must match (defense-in-depth atop SameSite=Strict).
+    csrf::validate(&cookies, &headers)?;
+
     // Membership check.
     if TenantMember::lookup(app.db(), tenant_id, user.user_id)
         .await?
@@ -64,17 +77,20 @@ async fn start_bootstrap(
         return Err(ApiError::Forbidden);
     }
 
-    // Load the repo (RLS scope) and atomically gate on bootstrap_status —
+    // Load the repo (tenant-scoped) and atomically gate on bootstrap_status —
     // a second click while a bootstrap is in flight must not enqueue a
-    // duplicate job that burns LLM budget.
+    // duplicate job that burns LLM budget. Both statements filter by
+    // tenant_id explicitly (primary isolation control; RLS is inert under
+    // the owner role).
     let mut tx = app.db().begin().await?;
     db::set_tenant(&mut tx, tenant_id).await?;
-    let repo = Repo::get_by_id(&mut tx, repo_id).await?;
+    let repo = Repo::get_by_id(&mut tx, repo_id, tenant_id).await?;
     let gated = sqlx::query(
         "UPDATE repos SET bootstrap_status = 'running', updated_at = now()
-         WHERE id = $1 AND bootstrap_status <> 'running' RETURNING id",
+         WHERE id = $1 AND tenant_id = $2 AND bootstrap_status <> 'running' RETURNING id",
     )
     .bind(repo_id)
+    .bind(tenant_id)
     .fetch_optional(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -85,8 +101,11 @@ async fn start_bootstrap(
     let job_id = Uuid::new_v4();
     let kind = JobKind::Bootstrap;
     let timeout_secs = kind.default_timeout_secs();
-    // Token + PUT URL must outlive the slowest legitimate run (×1.2).
-    let grant_ttl = Duration::from_secs(timeout_secs * 12 / 10);
+    // Grants (job token + pre-signed URLs) are minted here, at enqueue, but
+    // the worker may not claim the job until it has cleared the queue. Size
+    // the TTL to cover a realistic queue wait PLUS the full run, so a busy
+    // queue can't expire the upload URL mid-run after a ~$2 bootstrap.
+    let grant_ttl = Duration::from_secs(timeout_secs + GRANT_QUEUE_BUFFER_SECS);
 
     let r2_cfg = &app.config().r2;
     let r2_client = r2::build_client(r2_cfg);
@@ -97,16 +116,13 @@ async fn start_bootstrap(
         .map_err(|e| ApiError::Internal(anyhow::anyhow!("presign put: {}", e)))?;
 
     // Prior wiki (re-bootstrap) — hand the worker a GET so it can warm-start.
+    // Same TTL as the other grants: a fixed 10-min window would expire while
+    // the job waits in the queue and defeat the warm start.
     let wiki_get_url = match &repo.wiki_s3_key {
         Some(key) => Some(
-            r2::presigned_get(
-                &r2_client,
-                &r2_cfg.bucket,
-                key,
-                Duration::from_secs(10 * 60),
-            )
-            .await
-            .map_err(|e| ApiError::Internal(anyhow::anyhow!("presign get: {}", e)))?,
+            r2::presigned_get(&r2_client, &r2_cfg.bucket, key, grant_ttl)
+                .await
+                .map_err(|e| ApiError::Internal(anyhow::anyhow!("presign get: {}", e)))?,
         ),
         None => None,
     };

@@ -109,8 +109,12 @@ async fn callback(
 async fn logout(
     State(app): State<AppState>,
     cookies: Cookies,
+    headers: axum::http::HeaderMap,
     user: AuthUser,
 ) -> ApiResult<Response> {
+    // State-changing POST with cookie auth → require the CSRF double-submit.
+    crate::auth::csrf::validate(&cookies, &headers)?;
+
     let _: Result<u64, _> = Session::revoke(app.db(), user.session_id).await;
 
     cookies.add(build_clear_session_cookie());

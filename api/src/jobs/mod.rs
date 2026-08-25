@@ -1,8 +1,12 @@
 //! Enqueue jobs: insert into `jobs` then push to Redis.
 //!
-//! The DB insert is the source of truth; Redis is just a fast queue.
-//! If Redis drops a push (or we crash between insert and push), the
-//! janitor (TODO post-MVP) re-pushes queued-but-not-running jobs.
+//! The DB insert is the source of truth; Redis is just a fast queue. The
+//! `JobSpec` (job token + pre-signed URLs) lives ONLY in Redis, so a lost
+//! push cannot be reconstructed and re-pushed. Two safeguards instead:
+//!   - if the push fails, we immediately mark the just-created row `failed`
+//!     so it never lingers as an unrunnable `queued` orphan (see `enqueue`);
+//!   - a crash in the tiny window between commit and push leaves a `queued`
+//!     orphan, which the [`reap_stale_jobs`] janitor later fails out.
 
 use crate::{
     db::{self, models::Job},
@@ -100,13 +104,94 @@ pub async fn enqueue(
     .await?;
     tx.commit().await?;
 
-    // 2. Push to Redis.
+    // 2. Push to Redis. If this fails, the row is committed but will never
+    //    be picked up (the spec is not persisted), so fail it out now rather
+    //    than leave an unrunnable `queued` orphan.
     let mut redis = app.redis();
     let serialized = serde_json::to_string(&spec)?;
-    let _: () = redis.rpush(JOB_QUEUE_KEY, serialized).await?;
+    if let Err(e) = redis.rpush::<_, _, ()>(JOB_QUEUE_KEY, serialized).await {
+        let _ = Job::complete(
+            app.db(),
+            job.id,
+            "failed",
+            None,
+            Some("failed to enqueue job onto the work queue"),
+            Some("enqueue_failed"),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+        return Err(ApiError::Redis(e));
+    }
 
     tracing::info!(job_id = %job.id, kind = %kind, "job enqueued");
     Ok(job)
+}
+
+/// Fail out jobs (and their repos) that are stuck because their worker died.
+///
+/// - `running` past a generous lifetime: the worker claimed the job then
+///   crashed/was killed before reporting (deploy, OOM, panic). Its own
+///   subprocess timeout is ≤30min, so anything running much longer is dead.
+/// - `queued` past a generous age: the enqueue committed but the Redis push
+///   was lost (crash in the commit→push window), so no worker will ever see
+///   it — the spec is gone and cannot be reconstructed.
+///
+/// Runs on a plain pool connection across all tenants — a legitimate system
+/// operation. Returns the number of jobs reaped.
+pub async fn reap_stale_jobs(app: &AppState) -> ApiResult<u64> {
+    // 45 min > the longest job timeout (bootstrap 30 min) with headroom.
+    // repo_id is nullable, so each row is an Option<Uuid>.
+    let running = sqlx::query_scalar::<_, Option<Uuid>>(
+        r#"
+        UPDATE jobs
+        SET status = 'failed',
+            failure_reason = 'reaped_stale',
+            error = 'worker presumed dead; job exceeded its maximum lifetime',
+            finished_at = now()
+        WHERE status = 'running' AND started_at < now() - interval '45 minutes'
+        RETURNING repo_id
+        "#,
+    )
+    .fetch_all(app.db())
+    .await?;
+
+    // 60 min queued with no claim → orphaned (lost push) or a pathological
+    // backlog; either way it is not going to run.
+    let queued = sqlx::query_scalar::<_, Option<Uuid>>(
+        r#"
+        UPDATE jobs
+        SET status = 'failed',
+            failure_reason = 'reaped_orphan',
+            error = 'job was never picked up by a worker',
+            finished_at = now()
+        WHERE status = 'queued' AND queued_at < now() - interval '60 minutes'
+        RETURNING repo_id
+        "#,
+    )
+    .fetch_all(app.db())
+    .await?;
+
+    // Release any repos left stuck at bootstrap_status='running' by a reaped
+    // job, so the owner can retry. Only touch rows still 'running'.
+    let repo_ids: Vec<Uuid> = running.into_iter().chain(queued).flatten().collect();
+    if !repo_ids.is_empty() {
+        sqlx::query(
+            "UPDATE repos SET bootstrap_status = 'failed', updated_at = now()
+             WHERE id = ANY($1) AND bootstrap_status = 'running'",
+        )
+        .bind(&repo_ids)
+        .execute(app.db())
+        .await?;
+    }
+
+    let reaped = repo_ids.len() as u64;
+    if reaped > 0 {
+        tracing::warn!(reaped, "reaped stale/orphaned jobs");
+    }
+    Ok(reaped)
 }
 
 #[cfg(test)]
