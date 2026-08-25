@@ -60,7 +60,14 @@ impl Repo {
         .await
     }
 
-    pub async fn list_for_current_tenant(tx: &mut PgConnection) -> Result<Vec<Self>, sqlx::Error> {
+    /// List a tenant's repos. The explicit `tenant_id` predicate is the
+    /// PRIMARY isolation control (CLAUDE.md invariant) — RLS is only
+    /// defense-in-depth and is inert when the app connects as the table
+    /// owner/superuser, so this query must never rely on it alone.
+    pub async fn list_for_tenant(
+        tx: &mut PgConnection,
+        tenant_id: Uuid,
+    ) -> Result<Vec<Self>, sqlx::Error> {
         sqlx::query_as::<_, Repo>(
             r#"
             SELECT id, tenant_id, installation_id, github_repo_id, full_name,
@@ -68,15 +75,23 @@ impl Repo {
                    bootstrap_status, bootstrap_cost_usd, created_at, updated_at,
                    disconnected_at
             FROM repos
-            WHERE disconnected_at IS NULL
+            WHERE tenant_id = $1 AND disconnected_at IS NULL
             ORDER BY created_at DESC
             "#,
         )
+        .bind(tenant_id)
         .fetch_all(tx)
         .await
     }
 
-    pub async fn get_by_id(tx: &mut PgConnection, id: Uuid) -> Result<Self, sqlx::Error> {
+    /// Fetch one repo, scoped to `tenant_id`. Returns `RowNotFound` (→ 404)
+    /// for a repo that belongs to another tenant — the explicit filter is
+    /// what enforces isolation, not RLS.
+    pub async fn get_by_id(
+        tx: &mut PgConnection,
+        id: Uuid,
+        tenant_id: Uuid,
+    ) -> Result<Self, sqlx::Error> {
         sqlx::query_as::<_, Repo>(
             r#"
             SELECT id, tenant_id, installation_id, github_repo_id, full_name,
@@ -84,10 +99,11 @@ impl Repo {
                    bootstrap_status, bootstrap_cost_usd, created_at, updated_at,
                    disconnected_at
             FROM repos
-            WHERE id = $1
+            WHERE id = $1 AND tenant_id = $2
             "#,
         )
         .bind(id)
+        .bind(tenant_id)
         .fetch_one(tx)
         .await
     }

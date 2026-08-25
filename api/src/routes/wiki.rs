@@ -46,10 +46,13 @@ async fn get_page(
         return Err(ApiError::BadRequest("invalid slug".into()));
     }
 
-    // Verify the repo belongs to this tenant via the RLS-scoped tx.
+    // Verify the repo actually belongs to this tenant. The explicit
+    // tenant_id filter (not RLS) is what enforces it: a repo_id from another
+    // tenant yields RowNotFound → 404, so a member of tenant A cannot probe
+    // tenant B's repos through this route.
     let mut tx = app.db().begin().await?;
     db::set_tenant(&mut tx, tenant_id).await?;
-    let _ = crate::db::models::Repo::get_by_id(&mut tx, repo_id).await?;
+    crate::db::models::Repo::get_by_id(&mut tx, repo_id, tenant_id).await?;
     tx.commit().await?;
 
     let key = format!("tenants/{}/repos/{}/wiki/{}.md", tenant_id, repo_id, slug);

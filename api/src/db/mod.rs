@@ -29,7 +29,7 @@ pub async fn connect(database_url: &str) -> Result<PgPool, sqlx::Error> {
 /// ```ignore
 /// let mut tx = pool.begin().await?;
 /// db::set_tenant(&mut tx, tenant_id).await?;
-/// let rows = Repo::list_for_current_tenant(&mut tx).await?;
+/// let rows = Repo::list_for_tenant(&mut tx, tenant_id).await?;
 /// tx.commit().await?;
 /// ```
 pub async fn set_tenant(

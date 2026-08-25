@@ -83,7 +83,7 @@ async fn clone_token(
 
     let mut tx = app.db().begin().await?;
     db::set_tenant(&mut tx, job.tenant_id).await?;
-    let repo = Repo::get_by_id(&mut tx, repo_id).await?;
+    let repo = Repo::get_by_id(&mut tx, repo_id, job.tenant_id).await?;
     tx.commit().await?;
 
     let installation = GithubInstallation::get_by_id(app.db(), repo.installation_id)
@@ -94,6 +94,15 @@ async fn clone_token(
                 repo_id
             ))
         })?;
+    // Defense-in-depth: never mint a token for an installation that belongs
+    // to a different tenant than the job. The schema does not (yet) enforce
+    // repo.installation_id and repo.tenant_id agreeing, so check it here.
+    if installation.tenant_id != job.tenant_id {
+        return Err(ApiError::Internal(anyhow::anyhow!(
+            "repo {} links an installation from another tenant",
+            repo_id
+        )));
+    }
     if installation.suspended_at.is_some() || installation.disconnected_at.is_some() {
         return Err(ApiError::Conflict("github installation unavailable".into()));
     }

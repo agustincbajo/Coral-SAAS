@@ -40,7 +40,7 @@ async fn list_repos(
 
     let mut tx = app.db().begin().await?;
     db::set_tenant(&mut tx, tenant_id).await?;
-    let repos = Repo::list_for_current_tenant(&mut tx).await?;
+    let repos = Repo::list_for_tenant(&mut tx, tenant_id).await?;
     tx.commit().await?;
 
     Ok(Json(
