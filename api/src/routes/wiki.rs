@@ -8,9 +8,9 @@ use crate::{
     auth::AuthUser,
     db::{self, models::TenantMember},
     error::{ApiError, ApiResult},
-    state::AppState,
-    wiki::render::render_markdown,
     r2,
+    state::AppState,
+    wiki::{is_safe_slug, render::render_markdown},
 };
 use axum::{
     extract::{Path, State},
@@ -61,9 +61,8 @@ async fn get_page(
         Err(e) => return Err(ApiError::Internal(anyhow::anyhow!("{}", e))),
     };
 
-    let md = String::from_utf8(bytes).map_err(|e| {
-        ApiError::Internal(anyhow::anyhow!("wiki page is not UTF-8: {}", e))
-    })?;
+    let md = String::from_utf8(bytes)
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("wiki page is not UTF-8: {}", e)))?;
 
     let rendered = render_markdown(&md);
 
@@ -72,13 +71,6 @@ async fn get_page(
         title: rendered.title,
         html: rendered.html,
     }))
-}
-
-/// Allowed: `[a-z0-9-]+`. Coral's own SCHEMA uses kebab-case slugs.
-fn is_safe_slug(s: &str) -> bool {
-    !s.is_empty()
-        && s.len() <= 200
-        && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
 pub fn router() -> Router<AppState> {

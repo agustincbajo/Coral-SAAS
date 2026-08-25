@@ -75,6 +75,13 @@ subtle = "2.6"
 rand = "0.8"
 base64 = "0.22"
 
+# Archive packing (worker: wiki tarballs; pure-Rust, no system tar/zstd)
+tar = "0.4"
+zstd = "0.13"
+
+# Test support
+tempfile = "3"
+
 # Configuration
 config = "0.14"
 dotenvy = "0.15"

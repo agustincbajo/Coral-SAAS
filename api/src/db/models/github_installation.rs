@@ -45,6 +45,19 @@ impl GithubInstallation {
         .await
     }
 
+    /// Lookup by our row id (the `repos.installation_id` FK).
+    pub async fn get_by_id(pool: &PgPool, id: Uuid) -> Result<Option<Self>, sqlx::Error> {
+        sqlx::query_as::<_, GithubInstallation>(
+            "SELECT id, tenant_id, installation_id, account_login,
+                    account_type, installed_at, suspended_at, disconnected_at
+             FROM github_installations
+             WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+    }
+
     pub async fn lookup_by_installation_id(
         pool: &PgPool,
         installation_id: i64,

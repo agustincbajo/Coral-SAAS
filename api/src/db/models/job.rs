@@ -27,8 +27,13 @@ pub struct Job {
 impl Job {
     /// Insert into `jobs` with status='queued'. Caller pushes to Redis.
     /// Runs inside a tenant-scoped tx for RLS.
+    ///
+    /// The id comes from the caller (it's the `JobSpec::job_id` that goes
+    /// to Redis) — the row id and the queued spec id MUST be the same
+    /// value or the worker's claim-by-id never matches.
     pub async fn create(
         tx: &mut PgConnection,
+        id: Uuid,
         tenant_id: Uuid,
         repo_id: Option<Uuid>,
         user_id: Option<Uuid>,
@@ -37,13 +42,14 @@ impl Job {
     ) -> Result<Self, sqlx::Error> {
         sqlx::query_as::<_, Job>(
             r#"
-            INSERT INTO jobs (tenant_id, repo_id, user_id, kind, input)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO jobs (id, tenant_id, repo_id, user_id, kind, input)
+            VALUES ($1, $2, $3, $4, $5, $6)
             RETURNING id, tenant_id, repo_id, user_id, kind, status, input, output,
                       error, failure_reason, cost_usd, input_tokens, output_tokens,
                       duration_ms, queued_at, started_at, finished_at
             "#,
         )
+        .bind(id)
         .bind(tenant_id)
         .bind(repo_id)
         .bind(user_id)
@@ -77,6 +83,7 @@ impl Job {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn complete(
         pool: &PgPool,
         job_id: Uuid,

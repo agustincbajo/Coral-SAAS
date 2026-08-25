@@ -10,6 +10,7 @@ pub mod auth;
 pub mod github_install;
 pub mod github_webhook;
 pub mod health;
+pub mod internal_jobs;
 pub mod jobs;
 pub mod me;
 pub mod repos;
@@ -23,6 +24,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(me::router())
         .merge(repos::router())
         .merge(jobs::router())
+        .merge(internal_jobs::router())
         .merge(wiki::router())
         .merge(github_install::router())
         .merge(github_webhook::router())
