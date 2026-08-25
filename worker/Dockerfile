@@ -46,7 +46,9 @@ ARG CORAL_SHA256=3578f18cc6872bf344e1c5a482b49b8edff493d0aff582a19811f6e125435cc
 RUN curl -fsSL "https://github.com/agustincbajo/Coral/releases/download/${CORAL_VERSION}/coral-${CORAL_VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
       -o /tmp/coral.tar.gz \
     && echo "${CORAL_SHA256}  /tmp/coral.tar.gz" | sha256sum -c - \
-    && tar -xzf /tmp/coral.tar.gz -C /usr/local/bin/ coral \
+    # Release tarballs nest everything under coral-<ver>-<target>/ .
+    && tar -xzf /tmp/coral.tar.gz -C /usr/local/bin/ --strip-components=1 \
+         "coral-${CORAL_VERSION}-x86_64-unknown-linux-gnu/coral" \
     && chmod +x /usr/local/bin/coral \
     && rm /tmp/coral.tar.gz
 
