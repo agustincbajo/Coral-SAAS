@@ -274,3 +274,97 @@ async fn coral_without_wiki_output_fails_with_no_wiki() {
     assert_eq!(result.status, JobStatus::Failed);
     assert_eq!(result.failure_reason.as_deref(), Some("no_wiki"));
 }
+
+/// Write a fake executable named `stem` (adds `.cmd` on Windows).
+fn write_fake_bin(dir: &Path, stem: &str, body_unix: &str, body_windows: &str) -> PathBuf {
+    if cfg!(windows) {
+        let path = dir.join(format!("{stem}.cmd"));
+        std::fs::write(&path, body_windows).unwrap();
+        path
+    } else {
+        let path = dir.join(stem);
+        std::fs::write(&path, body_unix).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        path
+    }
+}
+
+/// A trufflehog that runs but exits non-zero (e.g. an unknown flag after a
+/// version bump) must FAIL the bootstrap closed, not read as a clean scan.
+#[tokio::test]
+async fn trufflehog_nonzero_exit_fails_closed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let remote = make_remote(tmp.path());
+    let coral_bin = write_fake_coral(tmp.path(), HAPPY_UNIX, HAPPY_WINDOWS);
+    let trufflehog = write_fake_bin(
+        tmp.path(),
+        "trufflehog",
+        "#!/bin/sh\necho 'unknown flag' >&2\nexit 2\n",
+        "@echo off\r\necho unknown flag 1>&2\r\nexit /b 2\r\n",
+    );
+    let (base_url, state) = spawn_mock_server().await;
+
+    let mut ctx = ctx_for(&base_url, &coral_bin, tmp.path());
+    ctx.trufflehog_bin = trufflehog.to_string_lossy().to_string();
+    let spec = spec_for(&remote, &base_url);
+
+    let result = coral_runner::run(&ctx, &spec).await.unwrap();
+
+    assert_eq!(result.status, JobStatus::Failed);
+    assert_eq!(result.failure_reason.as_deref(), Some("secret_scan_error"));
+    // Coral must never have run, so nothing was uploaded.
+    assert!(state.store.lock().unwrap().is_empty());
+}
+
+/// A missing trufflehog binary is the tolerated MVP skip (not a failure):
+/// the bootstrap proceeds. Guards against the fail-closed change also
+/// blocking the documented "scanner unavailable" path.
+#[tokio::test]
+async fn trufflehog_missing_is_skipped() {
+    let tmp = tempfile::tempdir().unwrap();
+    let remote = make_remote(tmp.path());
+    let coral_bin = write_fake_coral(tmp.path(), HAPPY_UNIX, HAPPY_WINDOWS);
+    let (base_url, _state) = spawn_mock_server().await;
+
+    let mut ctx = ctx_for(&base_url, &coral_bin, tmp.path());
+    ctx.trufflehog_bin = "definitely-not-a-real-binary-xyz".to_string();
+    let spec = spec_for(&remote, &base_url);
+
+    let result = coral_runner::run(&ctx, &spec).await.unwrap();
+    assert_eq!(
+        result.status,
+        JobStatus::Succeeded,
+        "error: {:?}",
+        result.error
+    );
+}
+
+/// If coral emits the Anthropic API key on its output, it must be scrubbed
+/// before landing in `JobResult.error` (which is served to tenants).
+#[tokio::test]
+async fn anthropic_key_scrubbed_from_coral_output() {
+    let tmp = tempfile::tempdir().unwrap();
+    let remote = make_remote(tmp.path());
+    let key = "sk-ant-SECRETKEY123";
+    let coral_bin = write_fake_coral(
+        tmp.path(),
+        &format!("#!/bin/sh\necho 'auth failed with {key}' >&2\nexit 1\n"),
+        &format!("@echo off\r\necho auth failed with {key} 1>&2\r\nexit /b 1\r\n"),
+    );
+    let (base_url, _state) = spawn_mock_server().await;
+
+    let mut ctx = ctx_for(&base_url, &coral_bin, tmp.path());
+    ctx.anthropic_api_key = Some(key.to_string());
+    let spec = spec_for(&remote, &base_url);
+
+    let result = coral_runner::run(&ctx, &spec).await.unwrap();
+
+    assert_eq!(result.failure_reason.as_deref(), Some("coral_exit"));
+    let err = result.error.unwrap();
+    assert!(!err.contains(key), "API key leaked into error: {err}");
+    assert!(err.contains("***"), "expected scrubbed marker, got: {err}");
+}

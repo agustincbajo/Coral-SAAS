@@ -98,18 +98,31 @@ async fn run_real(
     }
 
     // ---- 3. Secret scan gate (bootstrap only — GAP #68) ----
+    //
+    // Fail-closed on scan ERROR: a scanner that ran but exited non-zero (or
+    // timed out) is NOT evidence of a clean repo, so we abort rather than
+    // hand a possibly-secret-laden tree to the LLM. Only a genuinely
+    // missing/unspawnable binary is treated as "skip" — the documented MVP
+    // concession while GAP #68 is not fully closed.
     if spec.kind == JobKind::Bootstrap {
         match trufflehog_scan(ctx, &repo_dir).await {
-            Ok(0) => {}
-            Ok(n) => {
+            Ok(SecretScan::Clean) => {}
+            Ok(SecretScan::Findings(n)) => {
                 return Ok(failed(
                     spec,
                     "secrets_detected",
                     &format!("{n} verified secret(s) detected in the repository; aborting so they never reach an LLM"),
                 ));
             }
+            Ok(SecretScan::Unavailable(why)) => {
+                tracing::warn!(job_id = %spec.job_id, reason = %why, "trufflehog unavailable, skipping secret scan")
+            }
             Err(e) => {
-                tracing::warn!(job_id = %spec.job_id, error = %e, "trufflehog unavailable, skipping secret scan")
+                return Ok(failed(
+                    spec,
+                    "secret_scan_error",
+                    &format!("secret scan failed to complete: {e}"),
+                ));
             }
         }
     }
@@ -153,7 +166,11 @@ async fn run_real(
     if let Some(key) = &ctx.anthropic_api_key {
         cmd.env("ANTHROPIC_API_KEY", key);
     }
-    let coral = run_cmd(cmd, Duration::from_secs(spec.timeout_secs), &[]).await?;
+    // Scrub the API key from coral's captured output before it can reach
+    // the jobs row (served back to tenants via GET /api/jobs/:id) or the
+    // logs — same defense-in-depth the clone path applies to its token.
+    let coral_scrub: Vec<&str> = ctx.anthropic_api_key.as_deref().into_iter().collect();
+    let coral = run_cmd(cmd, Duration::from_secs(spec.timeout_secs), &coral_scrub).await?;
     if coral.timed_out {
         return Ok(failed(
             spec,
@@ -390,18 +407,43 @@ fn tail(s: &str, max: usize) -> String {
 // ---------------------------------------------------------------------------
 // trufflehog
 
-/// Returns the number of *verified* findings. Err = scanner unavailable
-/// (caller downgrades to a warning).
-async fn trufflehog_scan(ctx: &RunnerContext, repo_dir: &Path) -> anyhow::Result<usize> {
+/// Outcome of the secret scan. The distinction between `Unavailable` (the
+/// scanner could not be spawned at all) and an `Err` return (it ran but
+/// failed / timed out) is load-bearing: the former is a tolerated MVP skip,
+/// the latter fails the job closed. `Ok(Clean)` is the ONLY "proceed"
+/// signal — a non-zero exit must never masquerade as a clean scan.
+enum SecretScan {
+    Clean,
+    Findings(usize),
+    Unavailable(String),
+}
+
+async fn trufflehog_scan(ctx: &RunnerContext, repo_dir: &Path) -> anyhow::Result<SecretScan> {
     let mut cmd = Command::new(&ctx.trufflehog_bin);
     cmd.arg("filesystem")
         .arg("--json")
         .arg("--no-update")
         .arg(repo_dir);
 
-    let out = run_cmd(cmd, Duration::from_secs(TRUFFLEHOG_TIMEOUT_SECS), &[]).await?;
+    // A spawn failure (binary missing/not executable) is "unavailable" — the
+    // documented non-blocking case. Everything past this point means the
+    // process actually ran.
+    let out = match run_cmd(cmd, Duration::from_secs(TRUFFLEHOG_TIMEOUT_SECS), &[]).await {
+        Ok(out) => out,
+        Err(e) => {
+            return Ok(SecretScan::Unavailable(format!(
+                "could not run trufflehog: {e}"
+            )))
+        }
+    };
     if out.timed_out {
-        anyhow::bail!("trufflehog timed out");
+        anyhow::bail!("trufflehog timed out after {TRUFFLEHOG_TIMEOUT_SECS}s");
+    }
+    // Ran but exited non-zero (e.g. an unknown/renamed flag after a version
+    // bump, or a mid-scan read error): its stdout is not an authoritative
+    // clean result. Fail closed via the caller's `Err` arm.
+    if !out.success {
+        anyhow::bail!("trufflehog exited non-zero: {}", tail(&out.stderr, 500));
     }
 
     let verified = out
@@ -410,7 +452,11 @@ async fn trufflehog_scan(ctx: &RunnerContext, repo_dir: &Path) -> anyhow::Result
         .filter_map(|l| serde_json::from_str::<Value>(l).ok())
         .filter(|v| v.get("Verified").and_then(Value::as_bool) == Some(true))
         .count();
-    Ok(verified)
+    if verified == 0 {
+        Ok(SecretScan::Clean)
+    } else {
+        Ok(SecretScan::Findings(verified))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -447,18 +493,31 @@ async fn internal_post_body(
         .map_err(|e| anyhow::anyhow!("internal api {}: {}", action, e.without_url()))
 }
 
+/// Batch size for `wiki-urls`. Kept below the control plane's per-request
+/// cap (`MAX_WIKI_PAGES_PER_REQUEST` = 500) so a large wiki is chunked
+/// instead of hard-failing the whole upload after coral already ran.
+const WIKI_URL_BATCH: usize = 400;
+// Must stay under the control plane's per-request cap (500) or a full batch
+// would be rejected; enforced at compile time.
+const _: () = assert!(WIKI_URL_BATCH < 500);
+
 async fn request_wiki_urls(
     ctx: &RunnerContext,
     spec: &JobSpec,
     slugs: &[String],
 ) -> anyhow::Result<std::collections::BTreeMap<String, String>> {
-    let value =
-        internal_post_body(ctx, spec, "wiki-urls", Some(&json!({ "slugs": slugs }))).await?;
-    let urls = value
-        .get("urls")
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("wiki-urls response missing urls field"))?;
-    Ok(serde_json::from_value(urls)?)
+    let mut all = std::collections::BTreeMap::new();
+    for batch in slugs.chunks(WIKI_URL_BATCH) {
+        let value =
+            internal_post_body(ctx, spec, "wiki-urls", Some(&json!({ "slugs": batch }))).await?;
+        let urls = value
+            .get("urls")
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("wiki-urls response missing urls field"))?;
+        let map: std::collections::BTreeMap<String, String> = serde_json::from_value(urls)?;
+        all.extend(map);
+    }
+    Ok(all)
 }
 
 // ---------------------------------------------------------------------------
