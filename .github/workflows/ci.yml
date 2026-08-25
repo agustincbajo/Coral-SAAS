@@ -71,11 +71,15 @@ jobs:
       - name: Build worker image
         run: docker build -f worker/Dockerfile -t coral-saas-worker:ci .
 
+      # ignore-unfixed: base-image CVEs without an upstream fix are not
+      # actionable from this repo and would keep CI permanently red; the
+      # gate is for vulnerabilities we can actually remediate.
       - name: Trivy scan (api)
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: coral-saas-api:ci
           severity: CRITICAL,HIGH
+          ignore-unfixed: true
           exit-code: "1"
 
       - name: Trivy scan (worker)
@@ -83,4 +87,5 @@ jobs:
         with:
           image-ref: coral-saas-worker:ci
           severity: CRITICAL,HIGH
+          ignore-unfixed: true
           exit-code: "1"

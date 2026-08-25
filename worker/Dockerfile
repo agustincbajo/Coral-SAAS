@@ -37,7 +37,7 @@ RUN cargo build --release -p worker
 # Worker needs `git` (clone source repos), `coral` binary (vendored from
 # upstream Coral release), and trufflehog (secret scan pre-bootstrap).
 # Pinned digests should be added before launch — placeholders for now.
-FROM debian:bookworm-slim AS runtime
+FROM debian:trixie-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates git curl zstd \
     && rm -rf /var/lib/apt/lists/* \
